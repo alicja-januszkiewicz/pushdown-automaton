@@ -1,7 +1,9 @@
 #![allow(non_camel_case_types)]
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::cmp::Eq;
+use std::cmp::PartialEq;
 
 pub enum Action<Γ> {
     Push(Γ),
@@ -9,22 +11,36 @@ pub enum Action<Γ> {
     PopAndPush(Γ),
 }
 
-type K<'a, Q, Σ, Γ> = (&'a Q, Σ, Option<&'a Γ>);
-type V<Q, Γ> = (Q, Action<Γ>);
-type M<'a, Q, Σ, Γ> = HashMap<K<'a, Q, Σ, Γ>, V<Q, Γ>>;
+#[derive(Hash, PartialEq, Eq)]
+pub struct TransitionCondition<Q, Σ, Γ>(Q, Σ, Option<Γ>);
+#[derive(Hash, PartialEq, Eq)]
+pub struct TransitionConditionRef<'a, Q, Σ, Γ>(&'a Q, Σ, Option<&'a Γ>);
+pub struct TransitionAction<Q, Γ>(Q, Action<Γ>);
 
-pub trait HashMapExt<'a, Q, Σ, Γ> {
-    fn get(&self, k: &K<'a, Q, Σ, Γ>) -> Option<&V<Q, Γ>>;
+type K<Q, Σ, Γ> = TransitionCondition<Q, Σ, Γ>;
+type V<Q, Γ> = TransitionAction<Q, Γ>;
+type M<Q, Σ, Γ> = hashbrown::HashMap<K<Q, Σ, Γ>, V<Q, Γ>>;
+
+impl<'a, 'b, Q, Σ, Γ> hashbrown::Equivalent<TransitionCondition<Q, Σ, Γ>> for TransitionConditionRef<'a, Q, Σ, Γ>
+where Q: PartialEq, Σ: PartialEq, Γ: PartialEq,{
+    fn equivalent(&self, key: &TransitionCondition<Q, Σ, Γ>) -> bool {
+        self.0 == &key.0 && self.1 == key.1 && self.2 == key.2.as_ref()
+    }
 }
 
-impl<'a, Q, Σ, Γ> HashMapExt<'a, Q, Σ, Γ> for M<'a, Q, Σ, Γ>
+pub trait HashMapExt<'a, Q, Σ, Γ> {
+    fn get(&self, k: &TransitionConditionRef<'a, Q, Σ, Γ>) -> Option<&V<Q, Γ>>;
+}
+
+impl<'a, 'b, Q, Σ, Γ> HashMapExt<'a, Q, Σ, Γ> for M<Q, Σ, Γ>
 where
     Q: Eq + Hash,
     Σ: Eq + Hash,
     Γ: Eq + Hash,
 {
-    fn get(&self, k: &K<'a, Q, Σ, Γ>) -> Option<&V<Q, Γ>> {
-        HashMap::get(self, k)
+    fn get(&self, k: &TransitionConditionRef<'_, Q, Σ, Γ>) -> Option<&TransitionAction<Q, Γ>> {
+    // fn get(&self, k: &TransitionCondition<Q, Σ, Γ>) -> Option<&TransitionAction<Q, Γ>> {
+        hashbrown::HashMap::get(self, k)
     }
 }
 
@@ -32,7 +48,8 @@ where
 /// Σ is the input alphabet
 /// Γ is the stack alphabet
 /// δ is the transition function
-struct PushdownAutomaton<Q, Σ, Γ, δ> {
+/// https://en.wikipedia.org/wiki/Pushdown_automaton#Formal_definition
+pub struct PushdownAutomaton<Q, Σ, Γ, δ> {
     stack: Vec<*const Γ>,
     start_state: *const Q,
     final_states: HashSet<*const Q>,
@@ -45,7 +62,7 @@ where
     Q: Eq + Hash + 'a,
     Σ: Eq + Hash,
     Γ: Eq + Hash + 'a,
-    δ: HashMapExt<'a, Q, Σ, Γ>,
+    δ: HashMapExt<'a, Q, Σ, Γ> + 'a,
 {
     pub fn new(
         start_state: &Q,
@@ -66,21 +83,21 @@ where
     pub fn transition(&mut self, input_symbol: Σ) -> Result<(), &'static str> {
         let stack_top =self.stack.pop();
         let stack_top_ptr: Option<&Γ> = unsafe { stack_top.map(|r| &*r) };
-
         let start_state = unsafe { &*self.start_state as &Q };
+        let key = TransitionConditionRef(start_state, input_symbol, stack_top_ptr);
 
-        match self.transitions.get(&(start_state, input_symbol, stack_top_ptr)) {
-            Some((next_state, Action::Push(symbol))) => {
+        match self.transitions.get(&key) {
+            Some(TransitionAction(next_state, Action::Push(symbol))) => {
                 if let Some(value) = stack_top {
                     self.stack.push(value as *const Γ); // Push back the original top
                 }
                 self.stack.push(symbol as *const Γ);
                 self.start_state = next_state;
             }
-            Some((next_state, Action::Pop)) => {
+            Some(TransitionAction(next_state, Action::Pop)) => {
                 self.start_state = next_state;
             }
-            Some((next_state, Action::PopAndPush(symbol))) => {
+            Some(TransitionAction(next_state, Action::PopAndPush(symbol))) => {
                 self.stack.push(symbol as *const Γ);
                 self.start_state = next_state;
             }
@@ -114,13 +131,25 @@ fn main() {
 // Function to test the Pushdown Automaton
 fn test_pushdown_automaton() {
     // Example transitions using M
-    let mut transitions: M<State, Symbol, StackElement> = HashMap::new();
+    let mut transitions: M<State, Symbol, StackElement> = hashbrown::HashMap::new();
 
     // Define transitions
-    transitions.insert((&State::Start, Symbol::X, None), (State::A, Action::Push(StackElement::A)));
-    transitions.insert((&State::A, Symbol::Y, Some(&StackElement::A)), (State::B, Action::Pop));
-    transitions.insert((&State::B, Symbol::Z, None), (State::C, Action::PopAndPush(StackElement::B)));
-    transitions.insert((&State::C, Symbol::X, Some(&StackElement::B)), (State::Start, Action::Push(StackElement::C)));
+    transitions.insert(
+        TransitionCondition(State::Start, Symbol::X, None), 
+        TransitionAction(State::A, Action::Push(StackElement::A))
+    );
+    transitions.insert(
+        TransitionCondition(State::A, Symbol::Y, Some(StackElement::A)), 
+        TransitionAction(State::B, Action::Pop)
+    );
+    transitions.insert(
+        TransitionCondition(State::B, Symbol::Z, None), 
+        TransitionAction(State::C, Action::PopAndPush(StackElement::B))
+    );
+    transitions.insert(
+        TransitionCondition(State::C, Symbol::X, Some(StackElement::B)), 
+        TransitionAction(State::Start, Action::Push(StackElement::C))
+    );
 
     // Create PDA instance
     let final_states = HashSet::new(); // No final states defined in this example
