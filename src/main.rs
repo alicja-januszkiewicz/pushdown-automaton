@@ -32,15 +32,15 @@ where
 /// Σ is the input alphabet
 /// Γ is the stack alphabet
 /// δ is the transition function
-struct PushdownAutomaton<'a, Q, Σ, Γ, δ = M<'a, Q, Σ, Γ>> {
+struct PushdownAutomaton<Q, Σ, Γ, δ> {
     stack: Vec<*const Γ>,
     start_state: *const Q,
     final_states: HashSet<*const Q>,
     transitions: δ,
-    _phantom: &'a PhantomData<Σ>
+    _phantom: PhantomData<Σ>
 }
 
-impl<'a, Q, Σ, Γ, δ> PushdownAutomaton<'a, Q, Σ, Γ, δ>
+impl<'a, Q, Σ, Γ, δ> PushdownAutomaton<Q, Σ, Γ, δ>
 where
     Q: Eq + Hash + 'a,
     Σ: Eq + Hash,
@@ -59,7 +59,7 @@ where
             start_state,
             final_states,
             transitions,
-            _phantom: &PhantomData,
+            _phantom: PhantomData,
         }
     }
 
