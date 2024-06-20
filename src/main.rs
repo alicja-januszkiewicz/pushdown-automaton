@@ -1,7 +1,6 @@
 #![allow(non_camel_case_types)]
 use std::collections::HashSet;
 use std::hash::Hash;
-use std::marker::PhantomData;
 use std::cmp::Eq;
 use std::cmp::PartialEq;
 
@@ -17,9 +16,10 @@ pub struct TransitionCondition<Q, Σ, Γ>(Q, Σ, Option<Γ>);
 pub struct TransitionConditionRef<'a, Q, Σ, Γ>(&'a Q, Σ, Option<&'a Γ>);
 pub struct TransitionAction<Q, Γ>(Q, Action<Γ>);
 
-type K<Q, Σ, Γ> = TransitionCondition<Q, Σ, Γ>;
-type V<Q, Γ> = TransitionAction<Q, Γ>;
-type M<Q, Σ, Γ> = hashbrown::HashMap<K<Q, Σ, Γ>, V<Q, Γ>>;
+pub type δ<Q, Σ, Γ> = hashbrown::HashMap<
+    TransitionCondition<Q, Σ, Γ>, 
+    TransitionAction<Q, Γ>,
+>;
 
 impl<'a, 'b, Q, Σ, Γ> hashbrown::Equivalent<TransitionCondition<Q, Σ, Γ>> for TransitionConditionRef<'a, Q, Σ, Γ>
 where Q: PartialEq, Σ: PartialEq, Γ: PartialEq,{
@@ -28,46 +28,28 @@ where Q: PartialEq, Σ: PartialEq, Γ: PartialEq,{
     }
 }
 
-pub trait HashMapExt<'a, Q, Σ, Γ> {
-    fn get(&self, k: &TransitionConditionRef<'a, Q, Σ, Γ>) -> Option<&V<Q, Γ>>;
-}
-
-impl<'a, 'b, Q, Σ, Γ> HashMapExt<'a, Q, Σ, Γ> for M<Q, Σ, Γ>
-where
-    Q: Eq + Hash,
-    Σ: Eq + Hash,
-    Γ: Eq + Hash,
-{
-    fn get(&self, k: &TransitionConditionRef<'_, Q, Σ, Γ>) -> Option<&TransitionAction<Q, Γ>> {
-    // fn get(&self, k: &TransitionCondition<Q, Σ, Γ>) -> Option<&TransitionAction<Q, Γ>> {
-        hashbrown::HashMap::get(self, k)
-    }
-}
-
 /// Q is a finite set of states
 /// Σ is the input alphabet
 /// Γ is the stack alphabet
 /// δ is the transition function
 /// https://en.wikipedia.org/wiki/Pushdown_automaton#Formal_definition
-pub struct PushdownAutomaton<Q, Σ, Γ, δ> {
+pub struct PushdownAutomaton<Q, Σ, Γ> {
     stack: Vec<*const Γ>,
     start_state: *const Q,
     final_states: HashSet<*const Q>,
-    transitions: δ,
-    _phantom: PhantomData<Σ>
+    transitions: δ<Q, Σ, Γ>,
 }
 
-impl<'a, Q, Σ, Γ, δ> PushdownAutomaton<Q, Σ, Γ, δ>
+impl<Q, Σ, Γ> PushdownAutomaton<Q, Σ, Γ>
 where
-    Q: Eq + Hash + 'a,
+    Q: Eq + Hash,
     Σ: Eq + Hash,
-    Γ: Eq + Hash + 'a,
-    δ: HashMapExt<'a, Q, Σ, Γ> + 'a,
+    Γ: Eq + Hash,
 {
     pub fn new(
         start_state: &Q,
         final_states: HashSet<&Q>,
-        transitions: δ,
+        transitions: δ<Q, Σ, Γ>,
     ) -> Self {
         let stack = Vec::new();
         let final_states: HashSet<*const Q> = unsafe { core::mem::transmute(final_states) };
@@ -76,7 +58,6 @@ where
             start_state,
             final_states,
             transitions,
-            _phantom: PhantomData,
         }
     }
 
@@ -131,7 +112,7 @@ fn main() {
 // Function to test the Pushdown Automaton
 fn test_pushdown_automaton() {
     // Example transitions using M
-    let mut transitions: M<State, Symbol, StackElement> = hashbrown::HashMap::new();
+    let mut transitions = hashbrown::HashMap::new();
 
     // Define transitions
     transitions.insert(
